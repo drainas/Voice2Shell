@@ -2,102 +2,114 @@
 set -e
 
 echo "============================="
-echo "  Voice Control — Installer"
+echo "  Voice2Shell — Installer"
 echo "============================="
 echo ""
 
-# Determine install directory
-INSTALL_DIR="$HOME/VoiceControlApp"
+# Detect OS
+OS="$(uname -s)"
 
-# Check for Homebrew
-if ! command -v brew &>/dev/null; then
-    echo "❌ Homebrew is required. Install it from https://brew.sh"
-    echo '   Run: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-    exit 1
-fi
-echo "✓ Homebrew found"
+# Source directory (where this script lives)
+SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Install system dependencies
-echo ""
-echo "Installing dependencies..."
-brew install portaudio python@3.12 python-tk@3.12 2>/dev/null || true
-echo "✓ Dependencies installed"
+if [ "$OS" = "Darwin" ]; then
+    # =========================================================================
+    # macOS
+    # =========================================================================
 
-# Find Python 3.12
-PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
-if [ ! -f "$PYTHON" ]; then
-    echo "❌ Python 3.12 not found"
-    exit 1
-fi
-echo "✓ Python 3.12 found"
+    # Check for Homebrew
+    if ! command -v brew &>/dev/null; then
+        echo "❌ Homebrew is required. Install it from https://brew.sh"
+        echo '   Run: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+        exit 1
+    fi
+    echo "✓ Homebrew found"
 
-# Find Python.app framework binary (needed for GUI)
-PYTHON_APP="$(brew --prefix python@3.12)/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python"
-if [ ! -f "$PYTHON_APP" ]; then
-    echo "❌ Python.app framework not found"
-    exit 1
-fi
-echo "✓ Python.app framework found"
+    # Install system dependencies
+    echo ""
+    echo "Installing dependencies..."
+    brew install portaudio python@3.12 python-tk@3.12 2>/dev/null || true
+    echo "✓ Dependencies installed"
 
-# Copy app files
-echo ""
-echo "Installing to $INSTALL_DIR..."
-mkdir -p "$INSTALL_DIR"
-cp voice_control.py "$INSTALL_DIR/"
-cp requirements.txt "$INSTALL_DIR/"
+    # Find Python 3.12
+    PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
+    if [ ! -f "$PYTHON" ]; then
+        echo "❌ Python 3.12 not found"
+        exit 1
+    fi
+    echo "✓ Python 3.12 found"
 
-# Create virtual environment
-echo "Setting up virtual environment..."
-"$PYTHON" -m venv "$INSTALL_DIR/.venv"
-"$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip
-"$INSTALL_DIR/.venv/bin/pip" install --quiet -r "$INSTALL_DIR/requirements.txt"
-"$INSTALL_DIR/.venv/bin/pip" install --quiet openai-whisper
-echo "✓ Virtual environment ready"
+    # Find Python.app framework binary (needed for GUI)
+    PYTHON_APP="$(brew --prefix python@3.12)/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python"
+    if [ ! -f "$PYTHON_APP" ]; then
+        echo "❌ Python.app framework not found"
+        exit 1
+    fi
+    echo "✓ Python.app framework found"
 
-# Build .app bundle
-echo ""
-echo "Building Voice Control.app..."
-APP="$INSTALL_DIR/Voice Control.app"
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
-mkdir -p "$APP/Contents/Resources"
+    # Remove old Voice Control.app if it exists
+    if [ -d "/Applications/Voice Control.app" ]; then
+        rm -rf "/Applications/Voice Control.app"
+        echo "✓ Removed old Voice Control.app"
+    fi
 
-# Launcher script
-cat > "$APP/Contents/MacOS/launch" << LAUNCHER
+    # Build .app bundle in /Applications
+    echo ""
+    echo "Building Voice2Shell.app..."
+    APP="/Applications/Voice2Shell.app"
+    rm -rf "$APP"
+    mkdir -p "$APP/Contents/MacOS"
+    mkdir -p "$APP/Contents/Resources"
+
+    # Copy the main script into the app bundle
+    cp "$SRC_DIR/voice2shell.py" "$APP/Contents/Resources/"
+    cp "$SRC_DIR/platform_support.py" "$APP/Contents/Resources/"
+    cp "$SRC_DIR/requirements.txt" "$APP/Contents/Resources/"
+
+    # Create virtual environment inside the app bundle
+    echo "Setting up virtual environment (this may take a minute)..."
+    "$PYTHON" -m venv "$APP/Contents/Resources/.venv"
+    "$APP/Contents/Resources/.venv/bin/pip" install --quiet --upgrade pip
+    "$APP/Contents/Resources/.venv/bin/pip" install --quiet -r "$APP/Contents/Resources/requirements.txt"
+    "$APP/Contents/Resources/.venv/bin/pip" install --quiet openai-whisper
+    echo "✓ Virtual environment ready"
+
+    # Launcher script — fully self-contained, references only paths inside the .app
+    cat > "$APP/Contents/MacOS/launch" << LAUNCHER
 #!/bin/bash
-APPDIR="$INSTALL_DIR"
+APPDIR="\$(dirname "\$0")/../Resources"
 PYTHON_APP="$PYTHON_APP"
 export PYTHONPATH="\$APPDIR/.venv/lib/python3.12/site-packages"
-exec "\$PYTHON_APP" "\$APPDIR/voice_control.py"
+exec "\$PYTHON_APP" "\$APPDIR/voice2shell.py"
 LAUNCHER
-chmod +x "$APP/Contents/MacOS/launch"
+    chmod +x "$APP/Contents/MacOS/launch"
 
-# Info.plist
-cat > "$APP/Contents/Info.plist" << PLIST
+    # Info.plist
+    cat > "$APP/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Voice Control</string>
+    <string>Voice2Shell</string>
     <key>CFBundleDisplayName</key>
-    <string>Voice Control</string>
+    <string>Voice2Shell</string>
     <key>CFBundleIdentifier</key>
-    <string>com.voicecontrol.app</string>
+    <string>com.voice2shell.app</string>
     <key>CFBundleVersion</key>
-    <string>1.5</string>
+    <string>1.7</string>
     <key>CFBundleExecutable</key>
     <string>launch</string>
     <key>CFBundleIconFile</key>
     <string>icon</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Voice Control needs microphone access for speech recognition.</string>
+    <string>Voice2Shell needs microphone access for speech recognition.</string>
 </dict>
 </plist>
 PLIST
 
-# Generate icon
-"$INSTALL_DIR/.venv/bin/python3" << 'ICONPY'
+    # Generate icon
+    "$APP/Contents/Resources/.venv/bin/python3" << 'ICONPY'
 import struct, zlib
 SIZE = 256
 def create_png(w, h, px):
@@ -144,24 +156,106 @@ for y in range(SIZE):
             if px[i+3]==0 or px[i]==0x1e: px[i], px[i+1], px[i+2], px[i+3] = 0x89, 0xb4, 0xfa, 255
 with open('/tmp/vc_icon.png','wb') as f: f.write(create_png(SIZE,SIZE,px))
 ICONPY
-sips -s format icns /tmp/vc_icon.png --out "$APP/Contents/Resources/icon.icns" &>/dev/null
-rm /tmp/vc_icon.png
-echo "✓ App bundle created"
+    sips -s format icns /tmp/vc_icon.png --out "$APP/Contents/Resources/icon.icns" &>/dev/null
+    rm /tmp/vc_icon.png
+    echo "✓ App bundle created"
 
-# Copy to Desktop
-cp -R "$APP" "$HOME/Desktop/Voice Control.app"
-echo "✓ Copied to Desktop"
+    # Clean up old Desktop copy if it exists
+    if [ -d "$HOME/Desktop/Voice Control.app" ]; then
+        rm -rf "$HOME/Desktop/Voice Control.app"
+        echo "✓ Removed old Desktop copy"
+    fi
 
-echo ""
-echo "============================="
-echo "  Installation complete!"
-echo "============================="
-echo ""
-echo "  Double-click 'Voice Control' on your Desktop to launch."
-echo "  Drag it to the Dock for quick access."
-echo ""
-echo "  First launch: macOS may ask you to right-click → Open"
-echo "  to bypass the unidentified developer warning."
-echo ""
-echo "  The Whisper speech model (~150MB) downloads on first use."
-echo ""
+    echo ""
+    echo "============================="
+    echo "  Installation complete!"
+    echo "============================="
+    echo ""
+    echo "  Voice2Shell is now in /Applications."
+    echo "  Find it in Launchpad or Spotlight (⌘+Space → Voice2Shell)."
+    echo ""
+    echo "  First launch: macOS may ask you to right-click → Open"
+    echo "  to bypass the unidentified developer warning."
+    echo ""
+    echo "  You'll also need to grant Accessibility permission"
+    echo "  (System Settings → Privacy & Security → Accessibility)"
+    echo "  for the global push-to-talk hotkey to work."
+    echo ""
+    echo "  The Whisper speech model (~150MB) downloads on first use."
+    echo ""
+
+elif [ "$OS" = "Linux" ]; then
+    # =========================================================================
+    # Linux
+    # =========================================================================
+
+    echo "Detected Linux"
+    echo ""
+
+    # Detect package manager and install dependencies
+    if command -v apt &>/dev/null; then
+        echo "Using apt (Debian/Ubuntu)..."
+        sudo apt update -y
+        sudo apt install -y python3 python3-venv python3-tk portaudio19-dev xdotool
+    elif command -v dnf &>/dev/null; then
+        echo "Using dnf (Fedora)..."
+        sudo dnf install -y python3 python3-tkinter portaudio-devel xdotool
+    elif command -v pacman &>/dev/null; then
+        echo "Using pacman (Arch)..."
+        sudo pacman -S --noconfirm python python-virtualenv tk portaudio xdotool
+    else
+        echo "❌ No supported package manager found (apt, dnf, or pacman required)"
+        exit 1
+    fi
+    echo "✓ System dependencies installed"
+
+    # Create install directory
+    INSTALL_DIR="$HOME/.local/share/voice2shell"
+    mkdir -p "$INSTALL_DIR"
+    echo "✓ Install directory created at $INSTALL_DIR"
+
+    # Copy application files
+    cp "$SRC_DIR/voice2shell.py" "$INSTALL_DIR/"
+    cp "$SRC_DIR/platform_support.py" "$INSTALL_DIR/"
+    cp "$SRC_DIR/requirements.txt" "$INSTALL_DIR/"
+    echo "✓ Application files copied"
+
+    # Create virtual environment
+    echo "Setting up virtual environment (this may take a minute)..."
+    python3 -m venv "$INSTALL_DIR/.venv"
+    "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip
+    "$INSTALL_DIR/.venv/bin/pip" install --quiet -r "$INSTALL_DIR/requirements.txt"
+    echo "✓ Virtual environment ready"
+
+    # Create .desktop file
+    DESKTOP_DIR="$HOME/.local/share/applications"
+    mkdir -p "$DESKTOP_DIR"
+    cat > "$DESKTOP_DIR/voice2shell.desktop" << DESKTOP
+[Desktop Entry]
+Name=Voice2Shell
+Comment=Speak commands to your terminal
+Exec=$HOME/.local/share/voice2shell/.venv/bin/python3 $HOME/.local/share/voice2shell/voice2shell.py
+Icon=utilities-terminal
+Terminal=false
+Type=Application
+Categories=Utility;
+DESKTOP
+    echo "✓ Desktop entry created"
+
+    echo ""
+    echo "============================="
+    echo "  Installation complete!"
+    echo "============================="
+    echo ""
+    echo "  Voice2Shell is installed at $INSTALL_DIR"
+    echo "  Launch it from your application menu, or run:"
+    echo "    $INSTALL_DIR/.venv/bin/python3 $INSTALL_DIR/voice2shell.py"
+    echo ""
+    echo "  The Whisper speech model (~150MB) downloads on first use."
+    echo ""
+
+else
+    echo "❌ Unsupported operating system: $OS"
+    echo "   Voice2Shell supports macOS (Darwin) and Linux."
+    exit 1
+fi

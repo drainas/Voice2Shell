@@ -1,14 +1,19 @@
-#!/Users/drainas/Documents/VoiceControlApp/.venv/bin/python3
-"""Small floating voice control panel that sends commands to iTerm."""
+#!/usr/bin/env python3
+"""Voice2Shell — speak commands to your terminal."""
 
-import subprocess
 import threading
+import time
 import tkinter as tk
 from tkinter import font as tkfont
 
 import numpy as np
 import pyaudio
 import whisper
+
+from platform_support import (
+    PLATFORM, DEFAULT_FONT, AVAILABLE_TERMINALS, DEFAULT_TERMINAL,
+    HOTKEY_OPTIONS, send_to_terminal, HotkeyListener,
+)
 
 
 class VoiceControl:
@@ -22,9 +27,12 @@ class VoiceControl:
         self._silence_counter = 0
         self._current_energy = 0
         self._settings_visible = False
+        self._hotkey_hold_start = 0
+        self._hotkey_active = False
+        self._hotkey_threshold = 0.3
 
         self.root = tk.Tk()
-        self.root.title("Voice Control")
+        self.root.title("Voice2Shell")
         self.root.attributes("-topmost", True)
         self.root.geometry("470x210")
         self.root.resizable(True, True)
@@ -36,11 +44,12 @@ class VoiceControl:
 
     def _build_ui(self):
         bg = "#1e1e2e"
-        label_style = {"font": ("Menlo", 8), "bg": bg, "fg": "#6c7086", "anchor": "w"}
+        F = DEFAULT_FONT
+        label_style = {"font": (F, 8), "bg": bg, "fg": "#6c7086", "anchor": "w"}
         slider_style = {
             "bg": bg, "fg": "#cdd6f4", "troughcolor": "#313244",
             "highlightthickness": 0, "sliderrelief": tk.FLAT,
-            "font": ("Menlo", 8),
+            "font": (F, 8),
         }
 
         # --- Top button bar ---
@@ -48,7 +57,7 @@ class VoiceControl:
         btn_frame.pack(fill=tk.X)
 
         btn_style = {
-            "font": ("Menlo", 9, "bold"),
+            "font": (F, 9, "bold"),
             "relief": tk.FLAT,
             "pady": 3,
             "cursor": "hand2",
@@ -86,12 +95,12 @@ class VoiceControl:
         self.gear_canvas.pack(side=tk.RIGHT, padx=(0, 6), pady=3)
         self.gear_canvas.create_text(
             gear_size // 2, gear_size // 2, text="⚙",
-            font=("Menlo", 12), fill="#6c7086", tags="gear"
+            font=(F, 12), fill="#6c7086", tags="gear"
         )
         self.gear_canvas.bind("<Button-1>", lambda e: self._toggle_settings_panel())
 
         self.status_label = tk.Label(
-            btn_frame, text="Ready", font=("Menlo", 8),
+            btn_frame, text="Ready", font=(F, 8),
             anchor="w", bg="#313244", fg="#a6adc8"
         )
         self.status_label.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(6, 3))
@@ -113,7 +122,7 @@ class VoiceControl:
         )
         self.silence_slider.pack(side=tk.LEFT, padx=(2, 0))
         self.silence_label = tk.Label(
-            settings_frame, text="2sec", font=("Menlo", 8),
+            settings_frame, text="2sec", font=(F, 8),
             bg=bg, fg="#cdd6f4", width=5, anchor="w"
         )
         self.silence_label.pack(side=tk.LEFT, padx=(2, 10))
@@ -129,7 +138,7 @@ class VoiceControl:
         )
         self.threshold_slider.pack(side=tk.LEFT, padx=(2, 0))
         self.threshold_label = tk.Label(
-            settings_frame, text="300", font=("Menlo", 8),
+            settings_frame, text="300", font=(F, 8),
             bg=bg, fg="#cdd6f4", width=5, anchor="w"
         )
         self.threshold_label.pack(side=tk.LEFT, padx=(2, 0))
@@ -150,7 +159,7 @@ class VoiceControl:
         self.meter_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 8))
 
         self.energy_label = tk.Label(
-            meter_frame, text="---", font=("Menlo", 8),
+            meter_frame, text="---", font=(F, 8),
             bg=bg, fg="#6c7086", width=5, anchor="e"
         )
         self.energy_label.pack(side=tk.LEFT)
@@ -160,7 +169,7 @@ class VoiceControl:
         scale_frame.pack(fill=tk.X, padx=(32, 40))
         for val in ("0", "500", "1000", "1500", "2000"):
             tk.Label(
-                scale_frame, text=val, font=("Menlo", 7),
+                scale_frame, text=val, font=(F, 7),
                 bg=bg, fg="#45475a"
             ).pack(side=tk.LEFT, expand=True)
 
@@ -169,7 +178,7 @@ class VoiceControl:
 
         # --- Input box ---
         self.input_box = tk.Text(
-            self.root, font=tkfont.Font(family="Menlo", size=10), height=3,
+            self.root, font=tkfont.Font(family=F, size=10), height=3,
             bg="#313244", fg="#cdd6f4", insertbackground="#f5e0dc",
             relief=tk.FLAT, padx=6, pady=6, wrap=tk.WORD,
             highlightthickness=2, highlightcolor="#89b4fa",
@@ -186,13 +195,13 @@ class VoiceControl:
                                        highlightthickness=1, highlightbackground="#45475a")
 
         settings_bg = "#181825"
-        settings_label = {"font": ("Menlo", 9), "bg": settings_bg, "fg": "#6c7086", "anchor": "w"}
+        settings_label = {"font": (F, 9), "bg": settings_bg, "fg": "#6c7086", "anchor": "w"}
 
         header_frame = tk.Frame(self.settings_panel, bg=settings_bg)
         header_frame.pack(fill=tk.X, padx=10, pady=(8, 6))
-        tk.Label(header_frame, text="Settings", font=("Menlo", 10, "bold"),
+        tk.Label(header_frame, text="Settings", font=(F, 10, "bold"),
                  bg=settings_bg, fg="#cdd6f4").pack(side=tk.LEFT)
-        tk.Label(header_frame, text="v1.5", font=("Menlo", 8),
+        tk.Label(header_frame, text="v1.7", font=(F, 8),
                  bg=settings_bg, fg="#45475a").pack(side=tk.RIGHT)
 
         # Terminal selection
@@ -201,11 +210,11 @@ class VoiceControl:
 
         tk.Label(term_frame, text="Terminal app:", **settings_label).pack(side=tk.LEFT)
 
-        self.terminal_var = tk.StringVar(value="iTerm")
-        for name in ("iTerm", "Terminal"):
+        self.terminal_var = tk.StringVar(value=DEFAULT_TERMINAL)
+        for name in AVAILABLE_TERMINALS:
             tk.Radiobutton(
                 term_frame, text=name, variable=self.terminal_var, value=name,
-                font=("Menlo", 9), bg=settings_bg, fg="#cdd6f4",
+                font=(F, 9), bg=settings_bg, fg="#cdd6f4",
                 selectcolor="#313244", activebackground=settings_bg,
                 activeforeground="#cdd6f4", highlightthickness=0,
                 cursor="hand2"
@@ -221,7 +230,7 @@ class VoiceControl:
         for name in ("tiny", "base", "small"):
             tk.Radiobutton(
                 model_frame, text=name, variable=self.model_var, value=name,
-                font=("Menlo", 9), bg=settings_bg, fg="#cdd6f4",
+                font=(F, 9), bg=settings_bg, fg="#cdd6f4",
                 selectcolor="#313244", activebackground=settings_bg,
                 activeforeground="#cdd6f4", highlightthickness=0,
                 cursor="hand2", command=self._on_model_change
@@ -229,7 +238,7 @@ class VoiceControl:
 
         # Font size selection
         font_frame = tk.Frame(self.settings_panel, bg=settings_bg)
-        font_frame.pack(fill=tk.X, padx=10, pady=(3, 8))
+        font_frame.pack(fill=tk.X, padx=10, pady=3)
 
         tk.Label(font_frame, text="Font size:", **settings_label).pack(side=tk.LEFT)
 
@@ -237,11 +246,27 @@ class VoiceControl:
         for name in ("small", "large"):
             tk.Radiobutton(
                 font_frame, text=name, variable=self.fontsize_var, value=name,
-                font=("Menlo", 9), bg=settings_bg, fg="#cdd6f4",
+                font=(F, 9), bg=settings_bg, fg="#cdd6f4",
                 selectcolor="#313244", activebackground=settings_bg,
                 activeforeground="#cdd6f4", highlightthickness=0,
                 cursor="hand2", command=self._on_fontsize_change
             ).pack(side=tk.LEFT, padx=(12, 0))
+
+        # Push-to-talk hotkey
+        hotkey_frame = tk.Frame(self.settings_panel, bg=settings_bg)
+        hotkey_frame.pack(fill=tk.X, padx=10, pady=(3, 8))
+
+        tk.Label(hotkey_frame, text="Push-to-talk:", **settings_label).pack(side=tk.LEFT)
+
+        self.hotkey_var = tk.StringVar(value=HOTKEY_OPTIONS[0])
+        for name in HOTKEY_OPTIONS:
+            tk.Radiobutton(
+                hotkey_frame, text=name, variable=self.hotkey_var, value=name,
+                font=(F, 9), bg=settings_bg, fg="#cdd6f4",
+                selectcolor="#313244", activebackground=settings_bg,
+                activeforeground="#cdd6f4", highlightthickness=0,
+                cursor="hand2", command=self._on_hotkey_change
+            ).pack(side=tk.LEFT, padx=(8, 0))
 
     def _toggle_settings_panel(self):
         if self._settings_visible:
@@ -263,23 +288,24 @@ class VoiceControl:
             self.root.geometry(f"{w}x{h + self._settings_height}")
 
     def _on_fontsize_change(self):
+        F = DEFAULT_FONT
         size = self.fontsize_var.get()
         if size == "small":
-            btn_font = ("Menlo", 9, "bold")
-            input_font = ("Menlo", 10)
-            label_font = ("Menlo", 8)
-            status_font = ("Menlo", 8)
+            btn_font = (F, 9, "bold")
+            input_font = (F, 10)
+            label_font = (F, 8)
+            status_font = (F, 8)
         else:
-            btn_font = ("Menlo", 12, "bold")
-            input_font = ("Menlo", 14)
-            label_font = ("Menlo", 10)
-            status_font = ("Menlo", 10)
+            btn_font = (F, 12, "bold")
+            input_font = (F, 14)
+            label_font = (F, 10)
+            status_font = (F, 10)
 
         self.record_btn.config(font=btn_font)
         self.exec_btn.config(font=btn_font)
         self.clear_btn.config(font=btn_font)
         self.status_label.config(font=status_font)
-        self.input_box.config(font=tkfont.Font(family="Menlo", size=int(input_font[1])))
+        self.input_box.config(font=tkfont.Font(family=F, size=int(input_font[1])))
         self.silence_label.config(font=label_font)
         self.threshold_label.config(font=label_font)
         self.energy_label.config(font=label_font)
@@ -303,44 +329,11 @@ class VoiceControl:
         if not cmd:
             return
         self.input_box.delete("1.0", tk.END)
-
-        escaped = cmd.replace("\\", "\\\\").replace('"', '\\"')
-        terminal = self.terminal_var.get()
-
-        if terminal == "iTerm":
-            script = f'''
-            tell application "iTerm"
-                if (count of windows) > 0 then
-                    tell current session of current window
-                        write text "{escaped}"
-                    end tell
-                else
-                    create window with default profile
-                    tell current session of current window
-                        write text "{escaped}"
-                    end tell
-                end if
-            end tell
-            '''
-        else:
-            script = f'''
-            tell application "Terminal"
-                if (count of windows) > 0 then
-                    do script "{escaped}" in front window
-                else
-                    do script "{escaped}"
-                end if
-            end tell
-            '''
-
-        result = subprocess.run(
-            ["osascript", "-e", script],
-            capture_output=True, text=True
-        )
-        if result.returncode == 0:
+        success, err = send_to_terminal(cmd, self.terminal_var.get())
+        if success:
             self._set_status("Sent!", "#a6e3a1")
         else:
-            self._set_status("Error: " + result.stderr.strip(), "#f38ba8")
+            self._set_status("Error: " + err, "#f38ba8")
 
     def _clear_input(self):
         self.input_box.delete("1.0", tk.END)
@@ -530,7 +523,76 @@ class VoiceControl:
     def _set_status(self, text, color="#cdd6f4"):
         self.status_label.config(text=text, fg=color)
 
+    # --- Global hotkey ---
+
+    def _on_hotkey_change(self):
+        if hasattr(self, '_hotkey_listener'):
+            self._hotkey_listener.update_hotkey(self.hotkey_var.get())
+
+    def _start_hotkey_listener(self):
+        def on_press():
+            self.root.after(int(self._hotkey_threshold * 1000),
+                           self._hotkey_check_and_start)
+
+        def on_release():
+            if self.is_recording:
+                self.root.after(0, self._hotkey_stop_and_send)
+
+        self._hotkey_listener = HotkeyListener(
+            on_press=on_press,
+            on_release=on_release,
+            hotkey_name=self.hotkey_var.get(),
+        )
+        self._hotkey_listener.start()
+
+    def _hotkey_check_and_start(self):
+        if self._hotkey_listener._active and not self.is_recording:
+            self._hotkey_start_recording()
+
+    def _hotkey_start_recording(self):
+        if self._model_loading or self.is_recording:
+            return
+        self.is_recording = True
+        self._silence_counter = 0
+        self.audio_frames = []
+        self._transcribed_so_far = ""
+        self.record_btn.config(text="■ Stop", bg="#fab387")
+        self._set_status("Listening (hotkey)...", "#f38ba8")
+        self._start_recording()
+
+    def _hotkey_stop_and_send(self):
+        if not self.is_recording:
+            return
+        self.is_recording = False
+        self.record_btn.config(text="● Record", bg="#f38ba8")
+        self._stop_recording()
+
+        if not self.audio_frames:
+            self._set_status("Ready", "#a6e3a1")
+            return
+
+        self._set_status("Transcribing...", "#f9e2af")
+        def transcribe_and_send():
+            try:
+                audio_data = b"".join(self.audio_frames)
+                audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+                result = self.model.transcribe(audio_np, language="en", fp16=False)
+                text = result["text"].strip()
+                if text:
+                    self.root.after(0, lambda t=text: self._hotkey_send(t))
+                else:
+                    self.root.after(0, lambda: self._set_status("Couldn't understand", "#f38ba8"))
+            except Exception as e:
+                self.root.after(0, lambda: self._set_status(f"Error: {e}", "#f38ba8"))
+        threading.Thread(target=transcribe_and_send, daemon=True).start()
+
+    def _hotkey_send(self, text):
+        self.input_box.delete("1.0", tk.END)
+        self.input_box.insert("1.0", text)
+        self._execute()
+
     def run(self):
+        self._start_hotkey_listener()
         self.root.mainloop()
 
 
