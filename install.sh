@@ -74,13 +74,17 @@ if [ "$OS" = "Darwin" ]; then
     "$APP/Contents/Resources/.venv/bin/pip" install --quiet openai-whisper
     echo "✓ Virtual environment ready"
 
-    # Launcher script — fully self-contained, references only paths inside the .app
+    # Copy Python binary into the app bundle so macOS identifies it as Voice2Shell
+    cp "$PYTHON_APP" "$APP/Contents/MacOS/Voice2Shell"
+    chmod +x "$APP/Contents/MacOS/Voice2Shell"
+
+    # Launcher script — sets up environment then execs the local Python copy
     cat > "$APP/Contents/MacOS/launch" << LAUNCHER
 #!/bin/bash
 APPDIR="\$(dirname "\$0")/../Resources"
-PYTHON_APP="$PYTHON_APP"
+MACDIR="\$(dirname "\$0")"
 export PYTHONPATH="\$APPDIR/.venv/lib/python3.12/site-packages"
-exec "\$PYTHON_APP" "\$APPDIR/voice2shell.py"
+exec "\$MACDIR/Voice2Shell" "\$APPDIR/voice2shell.py"
 LAUNCHER
     chmod +x "$APP/Contents/MacOS/launch"
 
