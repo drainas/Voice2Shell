@@ -2,6 +2,7 @@ SpeechRecognition>=3.10.0
 PyAudio>=0.2.14
 openai-whisper
 numpy
+scipy
 pyobjc-framework-Quartz; sys_platform == 'darwin'
 pyobjc-framework-Cocoa; sys_platform == 'darwin'
 pynput; sys_platform != 'darwin'

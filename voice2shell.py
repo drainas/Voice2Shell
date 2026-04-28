@@ -8,6 +8,7 @@ from tkinter import font as tkfont
 
 import numpy as np
 import pyaudio
+import scipy.signal as signal
 import whisper
 
 from platform_support import (
@@ -22,6 +23,9 @@ class VoiceControl:
         self.audio_frames = []
         self.audio_stream = None
         self.pyaudio_inst = pyaudio.PyAudio()
+        dev_info = self.pyaudio_inst.get_default_input_device_info()
+        self._mic_rate = int(dev_info['defaultSampleRate'])
+        self._whisper_rate = 16000
         self.model = None
         self._model_loading = True
         self._silence_counter = 0
@@ -201,7 +205,7 @@ class VoiceControl:
         header_frame.pack(fill=tk.X, padx=10, pady=(8, 6))
         tk.Label(header_frame, text="Settings", font=(F, 10, "bold"),
                  bg=settings_bg, fg="#cdd6f4").pack(side=tk.LEFT)
-        tk.Label(header_frame, text="v1.7", font=(F, 8),
+        tk.Label(header_frame, text="v1.8", font=(F, 8),
                  bg=settings_bg, fg="#45475a").pack(side=tk.RIGHT)
 
         # Terminal selection
@@ -315,9 +319,13 @@ class VoiceControl:
         self._model_loading = True
         self._set_status(f"Loading {new_model} model...", "#f9e2af")
         def load():
-            self.model = whisper.load_model(new_model)
-            self._model_loading = False
-            self.root.after(0, lambda: self._set_status("Ready", "#a6e3a1"))
+            try:
+                self.model = whisper.load_model(new_model)
+                self._model_loading = False
+                self.root.after(0, lambda: self._set_status("Ready", "#a6e3a1"))
+            except Exception as e:
+                self._model_loading = False
+                self.root.after(0, lambda: self._set_status(f"Model failed: {e}", "#f38ba8"))
         threading.Thread(target=load, daemon=True).start()
 
     def _on_enter(self, event):
@@ -341,9 +349,13 @@ class VoiceControl:
 
     def _load_model(self):
         self.root.after(0, lambda: self._set_status("Loading Whisper model...", "#f9e2af"))
-        self.model = whisper.load_model("base")
-        self._model_loading = False
-        self.root.after(0, lambda: self._set_status("Ready", "#a6e3a1"))
+        try:
+            self.model = whisper.load_model("base")
+            self._model_loading = False
+            self.root.after(0, lambda: self._set_status("Ready", "#a6e3a1"))
+        except Exception as e:
+            self._model_loading = False
+            self.root.after(0, lambda: self._set_status(f"Model failed: {e}", "#f38ba8"))
 
     def _toggle_recording(self):
         if self._model_loading:
@@ -352,6 +364,7 @@ class VoiceControl:
 
         if self.is_recording:
             self.is_recording = False
+            self.audio_frames = []
             self.record_btn.config(text="● Record", bg="#f38ba8")
             self._set_status("Ready", "#a6e3a1")
             self._stop_recording()
@@ -369,7 +382,7 @@ class VoiceControl:
 
     def _start_recording(self):
         self.audio_stream = self.pyaudio_inst.open(
-            format=pyaudio.paInt16, channels=1, rate=16000,
+            format=pyaudio.paInt16, channels=1, rate=self._mic_rate,
             input=True, frames_per_buffer=1024,
             stream_callback=self._audio_callback
         )
@@ -389,7 +402,8 @@ class VoiceControl:
                 self._silence_counter = 0
             else:
                 self._silence_counter += 1
-                silence_limit = int(self.silence_var.get() * 15.6)
+                callbacks_per_sec = self._mic_rate / 1024
+                silence_limit = int(self.silence_var.get() * callbacks_per_sec)
                 if self._silence_counter > silence_limit and len(self.audio_frames) > 16:
                     self.root.after(0, self._auto_stop)
 
@@ -465,6 +479,7 @@ class VoiceControl:
         if not self.is_recording:
             return
         self.is_recording = False
+        self.audio_frames = []
         self.record_btn.config(text="● Record", bg="#f38ba8")
         self._set_status("Stopped (silence)", "#a6e3a1")
         self._stop_recording()
@@ -480,8 +495,7 @@ class VoiceControl:
                 self.root.after(1000, self._schedule_live_transcribe)
                 return
 
-            audio_data = b"".join(self.audio_frames)
-            audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+            audio_np = self._prepare_audio(self.audio_frames)
             result = self.model.transcribe(audio_np, language="en", fp16=False)
             text = result["text"].strip()
 
@@ -493,6 +507,8 @@ class VoiceControl:
             self.root.after(1000, self._schedule_live_transcribe)
 
     def _update_live_text(self, text):
+        if not self.is_recording:
+            return
         self.input_box.delete("1.0", tk.END)
         self.input_box.insert("1.0", text)
         self.input_box.see(tk.END)
@@ -513,6 +529,17 @@ class VoiceControl:
                 self.root.geometry(f"{width}x{min_win_height}")
 
         self._set_status("Listening...", "#f38ba8")
+
+    def _prepare_audio(self, raw_frames):
+        audio_np = np.frombuffer(b"".join(raw_frames), dtype=np.int16).astype(np.float32) / 32768.0
+        if self._mic_rate != self._whisper_rate:
+            gcd = np.gcd(self._whisper_rate, self._mic_rate)
+            audio_np = signal.resample_poly(audio_np, self._whisper_rate // gcd, self._mic_rate // gcd)
+        threshold = 0.01
+        above = np.where(np.abs(audio_np) > threshold)[0]
+        if len(above) == 0:
+            return audio_np
+        return audio_np[above[0]:]
 
     def _stop_recording(self):
         if self.audio_stream:
@@ -574,8 +601,7 @@ class VoiceControl:
         self._set_status("Transcribing...", "#f9e2af")
         def transcribe_and_send():
             try:
-                audio_data = b"".join(self.audio_frames)
-                audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+                audio_np = self._prepare_audio(self.audio_frames)
                 result = self.model.transcribe(audio_np, language="en", fp16=False)
                 text = result["text"].strip()
                 if text:

@@ -97,7 +97,7 @@ LAUNCHER
     <key>CFBundleIdentifier</key>
     <string>com.voice2shell.app</string>
     <key>CFBundleVersion</key>
-    <string>1.7</string>
+    <string>1.8</string>
     <key>CFBundleExecutable</key>
     <string>launch</string>
     <key>CFBundleIconFile</key>
